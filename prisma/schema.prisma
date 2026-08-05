@@ -1,0 +1,599 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum OrganizationStatus {
+  ACTIVE
+  PAUSED
+}
+
+enum UserRole {
+  OWNER_ADMIN
+  WORKER
+}
+
+enum UserStatus {
+  ACTIVE
+  INVITED
+  SUSPENDED
+  DISABLED
+}
+
+enum Platform {
+  PC
+  PLAYSTATION
+  XBOX
+}
+
+enum OrderStatus {
+  DRAFT
+  WAITING_FOR_DETAILS
+  READY_FOR_REVIEW
+  APPROVED
+  SUBMITTED_TO_FUT
+  PROCESSING
+  CUSTOMER_ACTION_REQUIRED
+  COMPLETED
+  FAILED
+  CANCELLED
+  DISPUTED
+  REFUNDED
+}
+
+enum ShiftStatus {
+  OPEN
+  CLOSED
+}
+
+enum ShiftEventType {
+  CLOCK_IN
+  CLOCK_OUT
+  BREAK_START
+  BREAK_END
+  HEARTBEAT
+  DISCONNECT
+  RECONNECT
+  ADMIN_CORRECTION
+}
+
+enum ApprovalState {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
+enum FutStatus {
+  PREPARED
+  SUBMITTED_TO_FUT
+  PROCESSING
+  CUSTOMER_ACTION_REQUIRED
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum FinancialEntryType {
+  REVENUE
+  MARKETPLACE_FEE
+  FUT_COST
+  REFUND
+  FX_FEE
+  ADJUSTMENT
+}
+
+enum ProofType {
+  DELIVERY_SCREENSHOT
+  RECEIPT
+  OTHER
+}
+
+enum PayrollStatus {
+  DRAFT
+  APPROVED
+  PAID
+  REVERSED
+}
+
+enum NotificationState {
+  PENDING
+  SENT
+  FAILED
+  SUPPRESSED
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+model Organization {
+  id                 String              @id @default(uuid()) @db.Uuid
+  name               String
+  baseCurrency       String              @default("EGP") @db.VarChar(3)
+  timezone           String              @default("Africa/Cairo")
+  status             OrganizationStatus  @default(ACTIVE)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  users              User[]
+  workerProfiles     WorkerProfile[]
+  sessions           Session[]
+  shifts             Shift[]
+  orders             Order[]
+  financialEntries   FinancialEntry[]
+  exchangeRates      ExchangeRate[]
+  auditEvents        AuditEvent[]
+  notificationEvents NotificationEvent[]
+  payrollPeriods     PayrollPeriod[]
+  payrollAdjustments PayrollAdjustment[]
+  salaryPolicies     SalaryPolicy[]
+  settings           Setting[]
+  backgroundJobs     BackgroundJob[]
+}
+
+model User {
+  id                 String                  @id @default(uuid()) @db.Uuid
+  organizationId     String                  @db.Uuid
+  email              String                  @db.VarChar(320)
+  name               String
+  role               UserRole                @default(WORKER)
+  status             UserStatus              @default(INVITED)
+  passwordHash       String
+  passwordChangedAt  DateTime?
+  twoFactorEnabled   Boolean                 @default(false)
+  twoFactorSecret    String?
+  lastLoginAt        DateTime?
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
+  organization       Organization            @relation(fields: [organizationId], references: [id])
+  workerProfile      WorkerProfile?
+  sessions           Session[]
+  createdOrders      Order[]                 @relation("OrderCreatedBy")
+  assignedOrders     Order[]                 @relation("OrderAssignedWorker")
+  shifts             Shift[]
+  shiftEvents        ShiftEvent[]
+  credentialAccesses CredentialAccessEvent[]
+  uploadedProofs     ProofFile[]
+  orderNotes         OrderNote[]
+  statusChanges      OrderStatusHistory[]
+  auditEvents        AuditEvent[]
+  financialEntries   FinancialEntry[]
+  approvedPayrolls   PayrollPeriod[]         @relation("PayrollApprovedBy")
+  payrollEntries     PayrollEntry[]
+  payrollAdjustments PayrollAdjustment[]
+
+  @@unique([organizationId, email])
+  @@index([organizationId, role, status])
+}
+
+model WorkerProfile {
+  id              String        @id @default(uuid()) @db.Uuid
+  userId          String        @unique @db.Uuid
+  organizationId  String        @db.Uuid
+  employmentStart DateTime?
+  employmentEnd   DateTime?
+  telegramChatId  String?
+  scheduleJson    Json?
+  salaryPolicyId  String?       @db.Uuid
+  user            User          @relation(fields: [userId], references: [id])
+  organization    Organization  @relation(fields: [organizationId], references: [id])
+  salaryPolicy    SalaryPolicy? @relation(fields: [salaryPolicyId], references: [id])
+
+  @@index([organizationId, employmentEnd])
+}
+
+model Session {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  userId         String       @db.Uuid
+  tokenHash      String       @unique
+  csrfTokenHash  String
+  expiresAt      DateTime
+  revokedAt      DateTime?
+  ipAddress      String?
+  userAgent      String?
+  createdAt      DateTime     @default(now())
+  lastSeenAt     DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  user           User         @relation(fields: [userId], references: [id])
+
+  @@index([userId, expiresAt])
+}
+
+model Shift {
+  id                    String        @id @default(uuid()) @db.Uuid
+  organizationId        String        @db.Uuid
+  workerId              String        @db.Uuid
+  scheduledStart        DateTime?
+  scheduledEnd          DateTime?
+  actualStart           DateTime?
+  actualEnd             DateTime?
+  status                ShiftStatus   @default(OPEN)
+  approvalState         ApprovalState @default(DRAFT)
+  connectedMinutes      Int           @default(0)
+  breakMinutes          Int           @default(0)
+  unexplainedGapMinutes Int           @default(0)
+  notes                 String?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+  organization          Organization  @relation(fields: [organizationId], references: [id])
+  worker                User          @relation(fields: [workerId], references: [id])
+  events                ShiftEvent[]
+
+  @@index([organizationId, workerId, status])
+}
+
+model ShiftEvent {
+  id           String         @id @default(uuid()) @db.Uuid
+  shiftId      String         @db.Uuid
+  workerId     String         @db.Uuid
+  type         ShiftEventType
+  occurredAt   DateTime       @default(now())
+  reason       String?
+  metadataJson Json?
+  shift        Shift          @relation(fields: [shiftId], references: [id])
+  worker       User           @relation(fields: [workerId], references: [id])
+
+  @@index([shiftId, occurredAt])
+}
+
+model Order {
+  id                  String                  @id @default(uuid()) @db.Uuid
+  organizationId      String                  @db.Uuid
+  eldoradoOrderId     String
+  platform            Platform
+  coinQuantity        Int
+  status              OrderStatus             @default(DRAFT)
+  assignedWorkerId    String?                 @db.Uuid
+  createdById         String                  @db.Uuid
+  deadline            DateTime?
+  grossSaleMinor      Int
+  saleCurrency        String                  @db.VarChar(3)
+  marketplaceFeeMinor Int                     @default(0)
+  refundMinor         Int                     @default(0)
+  paymentFxFeeMinor   Int                     @default(0)
+  version             Int                     @default(1)
+  closedAt            DateTime?
+  reconciledAt        DateTime?
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
+  organization        Organization            @relation(fields: [organizationId], references: [id])
+  assignedWorker      User?                   @relation("OrderAssignedWorker", fields: [assignedWorkerId], references: [id])
+  createdBy           User                    @relation("OrderCreatedBy", fields: [createdById], references: [id])
+  statusHistory       OrderStatusHistory[]
+  credentials         CustomerCredential?
+  credentialAccesses  CredentialAccessEvent[]
+  futOrder            FutOrder?
+  futApiEvents        FutApiEvent[]
+  financialEntries    FinancialEntry[]
+  proofFiles          ProofFile[]
+  notes               OrderNote[]
+  auditEvents         AuditEvent[]
+  notifications       NotificationEvent[]
+  payrollAdjustments  PayrollAdjustment[]
+
+  @@unique([organizationId, eldoradoOrderId])
+  @@index([organizationId, status, deadline])
+  @@index([assignedWorkerId, status])
+}
+
+model OrderStatusHistory {
+  id        String       @id @default(uuid()) @db.Uuid
+  orderId   String       @db.Uuid
+  previous  OrderStatus?
+  next      OrderStatus
+  actorId   String?      @db.Uuid
+  reason    String?
+  source    String
+  createdAt DateTime     @default(now())
+  order     Order        @relation(fields: [orderId], references: [id])
+  actor     User?        @relation(fields: [actorId], references: [id])
+
+  @@index([orderId, createdAt])
+}
+
+model CustomerCredential {
+  id                    String    @id @default(uuid()) @db.Uuid
+  orderId               String    @unique @db.Uuid
+  emailCiphertext       String?
+  passwordCiphertext    String?
+  backupCodesCiphertext String?
+  keyVersion            String
+  deletionDueAt         DateTime
+  deletedAt             DateTime?
+  deletionFailure       String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  order                 Order     @relation(fields: [orderId], references: [id])
+
+  @@index([deletionDueAt, deletedAt])
+}
+
+model CredentialAccessEvent {
+  id        String   @id @default(uuid()) @db.Uuid
+  orderId   String   @db.Uuid
+  actorId   String   @db.Uuid
+  reason    String
+  success   Boolean
+  ipAddress String?
+  createdAt DateTime @default(now())
+  order     Order    @relation(fields: [orderId], references: [id])
+  actor     User     @relation(fields: [actorId], references: [id])
+
+  @@index([orderId, createdAt])
+}
+
+model FutOrder {
+  id                    String        @id @default(uuid()) @db.Uuid
+  orderId               String        @unique @db.Uuid
+  providerOrderId       String?
+  idempotencyKey        String        @unique
+  correlationId         String
+  status                FutStatus     @default(PREPARED)
+  requestSnapshotJson   Json?
+  estimatedCostMinor    Int?
+  estimatedCostCurrency String?       @db.VarChar(3)
+  actualCostMinor       Int?
+  actualCostCurrency    String?       @db.VarChar(3)
+  submittedAt           DateTime?
+  completedAt           DateTime?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+  order                 Order         @relation(fields: [orderId], references: [id])
+  apiEvents             FutApiEvent[]
+
+  @@index([status, updatedAt])
+}
+
+model FutApiEvent {
+  id                   String    @id @default(uuid()) @db.Uuid
+  orderId              String    @db.Uuid
+  futOrderId           String?   @db.Uuid
+  direction            String
+  endpoint             String
+  requestMetadataJson  Json?
+  responseMetadataJson Json?
+  statusCode           Int?
+  retryCount           Int       @default(0)
+  correlationId        String
+  createdAt            DateTime  @default(now())
+  order                Order     @relation(fields: [orderId], references: [id])
+  futOrder             FutOrder? @relation(fields: [futOrderId], references: [id])
+
+  @@index([orderId, createdAt])
+}
+
+model FinancialEntry {
+  id              String             @id @default(uuid()) @db.Uuid
+  organizationId  String             @db.Uuid
+  orderId         String             @db.Uuid
+  type            FinancialEntryType
+  amountMinor     Int
+  currency        String             @db.VarChar(3)
+  egpAmountMinor  Int?
+  exchangeRate    Decimal?           @db.Decimal(18, 8)
+  exchangeRateId  String?            @db.Uuid
+  source          String
+  reason          String?
+  createdById     String?            @db.Uuid
+  reversalOfId    String?            @db.Uuid
+  createdAt       DateTime           @default(now())
+  organization    Organization       @relation(fields: [organizationId], references: [id])
+  order           Order              @relation(fields: [orderId], references: [id])
+  createdBy       User?              @relation(fields: [createdById], references: [id])
+  exchangeRateRow ExchangeRate?      @relation(fields: [exchangeRateId], references: [id])
+  reversalOf      FinancialEntry?    @relation("EntryReversal", fields: [reversalOfId], references: [id])
+  reversals       FinancialEntry[]   @relation("EntryReversal")
+
+  @@index([organizationId, createdAt])
+  @@index([orderId, type])
+}
+
+model ExchangeRate {
+  id               String           @id @default(uuid()) @db.Uuid
+  organizationId   String           @db.Uuid
+  sourceCurrency   String           @db.VarChar(3)
+  targetCurrency   String           @db.VarChar(3)
+  rate             Decimal          @db.Decimal(18, 8)
+  effectiveAt      DateTime
+  source           String
+  locked           Boolean          @default(false)
+  createdAt        DateTime         @default(now())
+  organization     Organization     @relation(fields: [organizationId], references: [id])
+  financialEntries FinancialEntry[]
+
+  @@index([organizationId, sourceCurrency, targetCurrency, effectiveAt])
+}
+
+model ProofFile {
+  id            String    @id @default(uuid()) @db.Uuid
+  orderId       String    @db.Uuid
+  objectKey     String
+  type          ProofType
+  checksum      String
+  mimeType      String
+  sizeBytes     Int
+  uploadedById  String    @db.Uuid
+  retentionDate DateTime
+  createdAt     DateTime  @default(now())
+  order         Order     @relation(fields: [orderId], references: [id])
+  uploadedBy    User      @relation(fields: [uploadedById], references: [id])
+
+  @@index([orderId, retentionDate])
+}
+
+model OrderNote {
+  id        String   @id @default(uuid()) @db.Uuid
+  orderId   String   @db.Uuid
+  authorId  String   @db.Uuid
+  body      String
+  createdAt DateTime @default(now())
+  order     Order    @relation(fields: [orderId], references: [id])
+  author    User     @relation(fields: [authorId], references: [id])
+
+  @@index([orderId, createdAt])
+}
+
+model AuditEvent {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  actorId        String?      @db.Uuid
+  orderId        String?      @db.Uuid
+  sessionId      String?      @db.Uuid
+  action         String
+  entityType     String
+  entityId       String?
+  ipAddress      String?
+  result         String
+  metadataJson   Json?
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  actor          User?        @relation(fields: [actorId], references: [id])
+  order          Order?       @relation(fields: [orderId], references: [id])
+
+  @@index([organizationId, createdAt])
+  @@index([entityType, entityId, createdAt])
+}
+
+model NotificationEvent {
+  id             String            @id @default(uuid()) @db.Uuid
+  organizationId String            @db.Uuid
+  orderId        String?           @db.Uuid
+  type           String
+  recipient      String
+  payloadJson    Json
+  state          NotificationState @default(PENDING)
+  dedupeKey      String            @unique
+  attempts       Int               @default(0)
+  nextAttemptAt  DateTime?
+  lastError      String?
+  sentAt         DateTime?
+  createdAt      DateTime          @default(now())
+  organization   Organization      @relation(fields: [organizationId], references: [id])
+  order          Order?            @relation(fields: [orderId], references: [id])
+
+  @@index([state, nextAttemptAt])
+}
+
+model PayrollPeriod {
+  id             String              @id @default(uuid()) @db.Uuid
+  organizationId String              @db.Uuid
+  monthStart     DateTime
+  monthEnd       DateTime
+  status         PayrollStatus       @default(DRAFT)
+  approvedById   String?             @db.Uuid
+  approvedAt     DateTime?
+  paidAt         DateTime?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  organization   Organization        @relation(fields: [organizationId], references: [id])
+  approvedBy     User?               @relation("PayrollApprovedBy", fields: [approvedById], references: [id])
+  entries        PayrollEntry[]
+  adjustments    PayrollAdjustment[]
+
+  @@unique([organizationId, monthStart])
+}
+
+model PayrollEntry {
+  id                   String        @id @default(uuid()) @db.Uuid
+  payrollPeriodId      String        @db.Uuid
+  workerId             String        @db.Uuid
+  completedCleanOrders Int           @default(0)
+  assignedValidOrders  Int           @default(0)
+  handlingRateBps      Int           @default(0)
+  medianAcceptanceSec  Int           @default(0)
+  medianCompletionSec  Int           @default(0)
+  failedOrders         Int           @default(0)
+  refundedOrders       Int           @default(0)
+  disputedOrders       Int           @default(0)
+  tier                 String
+  baseSalaryMinor      Int
+  bonusMinor           Int           @default(0)
+  deductionsMinor      Int           @default(0)
+  adjustmentsMinor     Int           @default(0)
+  finalAmountMinor     Int
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+  payrollPeriod        PayrollPeriod @relation(fields: [payrollPeriodId], references: [id])
+  worker               User          @relation(fields: [workerId], references: [id])
+
+  @@unique([payrollPeriodId, workerId])
+}
+
+model PayrollAdjustment {
+  id                  String        @id @default(uuid()) @db.Uuid
+  organizationId      String        @db.Uuid
+  payrollPeriodId     String        @db.Uuid
+  workerId            String        @db.Uuid
+  orderId             String        @db.Uuid
+  completedOrderDelta Int
+  amountMinor         Int           @default(0)
+  reason              String
+  createdById         String?       @db.Uuid
+  createdAt           DateTime      @default(now())
+  organization        Organization  @relation(fields: [organizationId], references: [id])
+  payrollPeriod       PayrollPeriod @relation(fields: [payrollPeriodId], references: [id])
+  worker              User          @relation(fields: [workerId], references: [id])
+  order               Order         @relation(fields: [orderId], references: [id])
+
+  @@unique([payrollPeriodId, orderId])
+  @@index([organizationId, workerId, createdAt])
+}
+
+model SalaryPolicy {
+  id               String          @id @default(uuid()) @db.Uuid
+  organizationId   String          @db.Uuid
+  name             String
+  tiersJson        Json
+  bonusInterval    Int             @default(10)
+  bonusAmountMinor Int             @default(15000)
+  effectiveFrom    DateTime
+  effectiveTo      DateTime?
+  active           Boolean         @default(true)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  organization     Organization    @relation(fields: [organizationId], references: [id])
+  workerProfiles   WorkerProfile[]
+
+  @@index([organizationId, active, effectiveFrom])
+}
+
+model Setting {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  key            String
+  valueJson      Json
+  updatedById    String?      @db.Uuid
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([organizationId, key])
+}
+
+model BackgroundJob {
+  id             String        @id @default(uuid()) @db.Uuid
+  organizationId String?       @db.Uuid
+  type           String
+  payloadJson    Json
+  status         JobStatus     @default(PENDING)
+  runAt          DateTime      @default(now())
+  lockedAt       DateTime?
+  lockedBy       String?
+  attempts       Int           @default(0)
+  maxAttempts    Int           @default(3)
+  lastError      String?
+  resultJson     Json?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+
+  @@index([status, runAt])
+}
