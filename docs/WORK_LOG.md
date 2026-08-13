@@ -10,6 +10,18 @@ Mandatory cross-developer handoff. Put the newest entry below this introduction.
 - Verified working copy: `D:\eldorado-main\eldorado-main`.
 - Real FUT calls blocked until test credentials or controlled-test scope is approved.
 
+## 2026-08-13 - Codex - GitHub main synchronization
+
+- Phase / acceptance criterion: source-control handoff and remote delivery.
+- Summary: Cloned the current GitHub `main` branch into a temporary D: sync working tree, copied the authoritative D: project while excluding secrets and machine artifacts, verified the exact Git-bound tree, and pushed the full MVP/security/UI update to GitHub.
+- Files changed: repository-wide verified MVP update; this handoff entry records the remote delivery.
+- Migration/schema impact: includes the two additive MVP v2 domain/shared-rate-limit migrations already verified locally.
+- Security/accounting impact: no `.env`, plaintext credential, provider secret, dependency tree, build output, local log, or database artifact was committed. The public `.env.example` contains placeholders only.
+- Commands and results: `npm ci` reported 0 vulnerabilities; Prisma generation, typecheck, lint, 25/25 tests, workflow smoke, and production build passed in the GitHub-bound clone; commit `5648718` pushed from `3996166` to `main`.
+- Decisions needed: none for source control.
+- Blockers: external live FUT and pilot gates remain unchanged.
+- Exact next step: use GitHub `main` as the shared developer baseline; continue only with the controlled live-test and staging gates recorded in the active plan.
+
 ## 2026-08-13 - Codex - Operations-desk login redesign
 
 - Phase / acceptance criterion: visual quality and secure-access usability follow-up.
