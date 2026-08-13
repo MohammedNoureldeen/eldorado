@@ -4,7 +4,7 @@ import { FulfillmentSource, OrderStatus, Platform, ProofType, UserRole, UserStat
 import { db } from '../src/lib/db';
 import { env } from '../src/lib/config';
 import { hashPassword } from '../src/lib/auth/password';
-import { addCredentials, changeOrderStatus, confirmFutOrder, createOrder, deleteExpiredCredentials, getOrder, listOrders, prepareFutOrder, syncFutOrder } from '../src/lib/orders/service';
+import { addCredentials, changeOrderStatus, completeOrderManually, confirmFutOrder, createOrder, deleteExpiredCredentials, getOrder, listOrders, prepareFutOrder, syncFutOrder } from '../src/lib/orders/service';
 import { decryptCredentialSet } from '../src/lib/crypto/secrets';
 import { rotateCredentialEncryption } from '../src/lib/security/credential-maintenance';
 import { checkSharedRateLimit } from '../src/lib/security/rate-limit';
@@ -28,6 +28,17 @@ async function main() {
 
   const incomplete = await createOrder(workerActor, { marketplaceReference: `hardening-incomplete-${Date.now()}`, customerName: 'Hardening Incomplete Customer', platform: Platform.PC, coinQuantity: 200_000, grossSaleMinor: 10_000, fulfillmentSource: FulfillmentSource.PUBLIC_SUPPLIER });
   await assert.rejects(() => changeOrderStatus(workerActor, incomplete.id, OrderStatus.READY_FOR_REVIEW, incomplete.version, 'Should remain draft'), /active customer credentials/i);
+
+  const manual = await createOrder(workerActor, { marketplaceReference: `hardening-manual-${Date.now()}`, customerName: 'Hardening Manual Customer', platform: Platform.PC, coinQuantity: 200_000, grossSaleMinor: 10_000, fulfillmentSource: FulfillmentSource.PUBLIC_SUPPLIER });
+  await addCredentials(workerActor, manual.id, { email: 'manual@example.invalid', password: 'manual-password', backupCodes: ['manual-code'] });
+  await changeOrderStatus(workerActor, manual.id, OrderStatus.READY_FOR_REVIEW, manual.version, 'Manual order ready');
+  await assert.rejects(() => completeOrderManually(workerActor, manual.id, { version: manual.version + 1, actualCostMinor: 4_100 }), /delivery proof/i);
+  await db.proofFile.create({ data: { orderId: manual.id, objectKey: `hardening/manual/${manual.id}`, type: ProofType.DELIVERY_SCREENSHOT, checksum: 'c'.repeat(64), mimeType: 'image/png', sizeBytes: 8, uploadedById: worker.id, retentionDate: new Date(Date.now() + 86_400_000) } });
+  await completeOrderManually(workerActor, manual.id, { version: manual.version + 1, actualCostMinor: 4_100 });
+  const manuallyCompleted = await db.order.findUniqueOrThrow({ where: { id: manual.id }, include: { futOrder: true } });
+  assert.equal(manuallyCompleted.status, OrderStatus.COMPLETED);
+  assert.equal(manuallyCompleted.futOrder?.transferMethod, 'MANUAL');
+  assert.equal(manuallyCompleted.futOrder?.actualCostMinor, 4_100);
 
   const created = await createOrder(workerActor, { marketplaceReference: `hardening-confirm-${Date.now()}`, customerName: 'Hardening Concurrency Customer', platform: Platform.PC, coinQuantity: 200_000, grossSaleMinor: 10_000, fulfillmentSource: FulfillmentSource.PUBLIC_SUPPLIER });
   await addCredentials(workerActor, created.id, { email: 'hardening-customer@example.invalid', password: 'sanitized-password', backupCodes: ['sanitized-code'] });
@@ -98,7 +109,7 @@ async function main() {
   const unchanged = await db.auditEvent.findUniqueOrThrow({ where: { id: audit.id } });
   assert.equal(unchanged.result, 'SUCCESS');
 
-  console.log(JSON.stringify({ incompleteOrderGuard: true, concurrentConfirmations: confirmationResults.length, providerCreates, workerIsolation: true, terminalRetentionDays: 7, rotatedCredentials: rotation.rotated, deletedCredentials: deletedCount, sharedRateLimitAllowed: 10, automationEmergencyStop: true, appendOnlyAudit: true }));
+  console.log(JSON.stringify({ incompleteOrderGuard: true, manualCompletion: true, concurrentConfirmations: confirmationResults.length, providerCreates, workerIsolation: true, terminalRetentionDays: 7, rotatedCredentials: rotation.rotated, deletedCredentials: deletedCount, sharedRateLimitAllowed: 10, automationEmergencyStop: true, appendOnlyAudit: true }));
 }
 
 main().catch((error) => { console.error(error); process.exitCode = 1; }).finally(() => db.$disconnect());

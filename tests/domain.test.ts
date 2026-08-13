@@ -53,6 +53,8 @@ test('sanitized fixtures represent public and owned fulfillment without credenti
 
 test('order transitions reject unsafe jumps', () => {
   assertTransition('DRAFT', 'WAITING_FOR_DETAILS');
+  assertTransition('READY_FOR_REVIEW', 'COMPLETED');
+  assertTransition('APPROVED', 'COMPLETED');
   assert.throws(() => assertTransition('DRAFT', 'COMPLETED'), /Invalid order transition/);
   assert.throws(() => assertTransition('REFUNDED', 'COMPLETED'), /Invalid order transition/);
 });

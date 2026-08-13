@@ -70,7 +70,7 @@ function assertOrderAccessForCreate(actor: Actor, assignedWorkerId?: string): vo
 }
 
 export async function listOrders(actor: Actor): Promise<unknown[]> {
-  const orders = await db.order.findMany({ where: { organizationId: actor.organizationId, ...(actor.role === UserRole.WORKER ? { assignedWorkerId: actor.id } : {}) }, include: { assignedWorker: { select: { id: true, name: true, email: true } }, futOrder: { select: { status: true, submissionState: true, fulfillmentSource: true, estimatedCostMinor: true, estimatedCostCurrency: true, actualCostMinor: true, actualCostCurrency: true, quoteFetchedAt: true, quoteExpiresAt: true } }, credentials: { select: { deletedAt: true, deletionDueAt: true } }, _count: { select: { proofFiles: true, notes: true } } }, orderBy: [{ deadline: 'asc' }, { createdAt: 'desc' }] });
+  const orders = await db.order.findMany({ where: { organizationId: actor.organizationId, ...(actor.role === UserRole.WORKER ? { assignedWorkerId: actor.id } : {}) }, include: { assignedWorker: { select: { id: true, name: true, email: true } }, futOrder: { select: { providerOrderId: true, transferMethod: true, status: true, submissionState: true, fulfillmentSource: true, estimatedCostMinor: true, estimatedCostCurrency: true, actualCostMinor: true, actualCostCurrency: true, quoteFetchedAt: true, quoteExpiresAt: true } }, credentials: { select: { deletedAt: true, deletionDueAt: true } }, _count: { select: { proofFiles: true, notes: true } } }, orderBy: [{ deadline: 'asc' }, { createdAt: 'desc' }] });
   if (isAdmin(actor) || await getSetting(actor.organizationId, 'workerQuoteVisibility', true)) return orders;
   return orders.map((order) => ({ ...order, futOrder: order.futOrder ? { ...order.futOrder, estimatedCostMinor: null, estimatedCostCurrency: null, actualCostMinor: null, actualCostCurrency: null } : null }));
 }
@@ -180,6 +180,35 @@ export async function changeOrderStatus(actor: Actor, orderId: string, next: Ord
   }
   if (next === OrderStatus.REFUNDED) assertRole(actor as AuthUser, UserRole.OWNER_ADMIN);
   await transitionWithHistory(actor, order, next, reason.trim().slice(0, 500), source);
+}
+
+export async function completeOrderManually(actor: Actor, orderId: string, input: { version: number; actualCostMinor: number }): Promise<void> {
+  const order = await db.order.findFirst({ where: { id: orderId, organizationId: actor.organizationId }, include: { credentials: true, futOrder: true, proofFiles: true } });
+  assert(order, 404, 'Order not found', 'ORDER_NOT_FOUND');
+  assertOrderAccess(actor, order, true);
+  assert(order.version === input.version, 409, 'Order changed; reload before completing it', 'ORDER_VERSION_CONFLICT');
+  assert(([OrderStatus.READY_FOR_REVIEW, OrderStatus.APPROVED] as OrderStatus[]).includes(order.status), 409, 'Only a ready or approved order can be completed manually', 'ORDER_NOT_READY');
+  assert(order.assignedWorkerId, 400, 'Assign a worker before manual completion');
+  assert(order.credentials?.emailCiphertext && order.credentials.passwordCiphertext && !order.credentials.deletedAt, 400, 'Active customer credentials are required');
+  assert(order.proofFiles.length > 0, 400, 'Upload delivery proof before manual completion');
+  assert(Number.isSafeInteger(input.actualCostMinor) && input.actualCostMinor >= 0 && input.actualCostMinor <= 100_000_000, 400, 'Enter a valid actual cost in USD');
+  assert(!order.futOrder?.providerOrderId && order.futOrder?.submissionState !== 'UNKNOWN' && order.futOrder?.submissionState !== 'SUBMITTED', 409, 'This order was already submitted to FUT and must be completed through provider sync', 'FUT_ALREADY_SUBMITTED');
+  assertTransition(order.status, OrderStatus.COMPLETED);
+
+  const now = new Date();
+  const manualReference = `manual-${order.id}`;
+  await db.$transaction(async (tx) => {
+    const updated = await tx.order.updateMany({ where: { id: order.id, version: order.version }, data: { status: OrderStatus.COMPLETED, version: { increment: 1 }, closedAt: now } });
+    if (!updated.count) throw new AppError(409, 'Order changed; reload before completing it', 'ORDER_VERSION_CONFLICT');
+    const futOrder = await tx.futOrder.upsert({
+      where: { orderId: order.id },
+      create: { orderId: order.id, externalOrderId: manualReference, idempotencyKey: manualReference, correlationId: newCorrelationId(), status: 'COMPLETED', submissionState: 'COMPLETED', fulfillmentSource: order.fulfillmentSource, transferMethod: 'MANUAL', estimatedCostMinor: input.actualCostMinor, estimatedCostCurrency: 'USD', actualCostMinor: input.actualCostMinor, actualCostCurrency: 'USD', completedAt: now, requestSnapshotJson: { mode: 'manual', actualCostMinor: input.actualCostMinor, currency: 'USD' } },
+      update: { status: 'COMPLETED', submissionState: 'COMPLETED', transferMethod: 'MANUAL', actualCostMinor: input.actualCostMinor, actualCostCurrency: 'USD', completedAt: now, requestSnapshotJson: { mode: 'manual', actualCostMinor: input.actualCostMinor, currency: 'USD' } }
+    });
+    await tx.orderStatusHistory.create({ data: { orderId: order.id, previous: order.status, next: OrderStatus.COMPLETED, actorId: actor.id, reason: 'Manual fulfillment completed with delivery proof', source: 'manual' } });
+    await tx.customerCredential.updateMany({ where: { orderId: order.id, deletedAt: null }, data: { deletionDueAt: closureDeletionDate(now) } });
+    await tx.auditEvent.create({ data: { organizationId: actor.organizationId, actorId: actor.id, orderId: order.id, action: 'ORDER_MANUALLY_COMPLETED', entityType: 'FUT_ORDER', entityId: futOrder.id, result: 'SUCCESS', metadataJson: { actualCostMinor: input.actualCostMinor, currency: 'USD', proofCount: order.proofFiles.length } } });
+  });
 }
 
 export async function prepareFutOrder(actor: Actor, orderId: string, provider: FutProvider): Promise<{ id: string; estimatedCostMinor: number; currency: string; version: number }> {
@@ -323,7 +352,7 @@ export async function addProof(actor: Actor, orderId: string, file: { type: stri
   const order = await db.order.findFirst({ where: { id: orderId, organizationId: actor.organizationId } });
   assert(order, 404, 'Order not found', 'ORDER_NOT_FOUND');
   assertOrderAccess(actor, order, true);
-  assert(([OrderStatus.PROCESSING, OrderStatus.CUSTOMER_ACTION_REQUIRED, OrderStatus.COMPLETED] as OrderStatus[]).includes(order.status), 409, 'Proof can only be uploaded during fulfillment');
+  assert(([OrderStatus.READY_FOR_REVIEW, OrderStatus.APPROVED, OrderStatus.PROCESSING, OrderStatus.CUSTOMER_ACTION_REQUIRED, OrderStatus.COMPLETED] as OrderStatus[]).includes(order.status), 409, 'Proof can only be uploaded after an order is ready for fulfillment');
   const { checksum } = validateProof(file);
   await scanProof(file.bytes, file.type);
   const objectKey = `${actor.organizationId}/${orderId}/${randomUUID()}`;

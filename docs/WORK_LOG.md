@@ -10,6 +10,18 @@ Mandatory cross-developer handoff. Put the newest entry below this introduction.
 - Verified working copy: `D:\eldorado-main\eldorado-main`.
 - Real FUT calls blocked until test credentials or controlled-test scope is approved.
 
+## 2026-08-13 - Codex - Manual order completion path
+
+- Phase / acceptance criterion: manual-first fulfillment can close and reconcile without a FUT API submission.
+- Summary: Added a dedicated manual-completion workspace for ready/approved orders. Workers can upload proof, enter actual USD fulfillment cost, and complete the order without submitting to FUT; the result uses the existing cost and reconciliation model and is explicitly audited as manual.
+- Files changed: `app/dashboard/DashboardClient.tsx`, `app/globals.css`, `app/api/orders/[id]/manual-complete/route.ts`, `src/lib/orders/service.ts`, `src/lib/domain.ts`, `tests/domain.test.ts`, `scripts/hardening-smoke.ts`, and this log.
+- Migration/schema impact: none; the existing FUT cost record stores manual fulfillment with `transferMethod=MANUAL` so current ledger reporting remains compatible.
+- Security/accounting impact: requires assigned worker, active encrypted credentials, delivery proof, valid USD cents, an allowed order state, and no prior/unknown FUT submission. Completion, cost, proof count, retention deadline, and actor are audited.
+- Commands and results: typecheck passed; lint passed with zero warnings/errors; tests passed 25/25; production build passed with the manual-complete route in the manifest; database hardening smoke passed the missing-proof rejection and successful manual completion assertions; browser verification completed sanitized order `ELD-2026-000019` manually with $40.00 cost and one proof, then reconciled $100.00 revenue, $5.00 marketplace fee, and $40.00 cost. No FUT provider submission occurred.
+- Decisions needed: none for the manual MVP.
+- Blockers: real FUT automation validation remains separately blocked pending approved credentials and scope.
+- Exact next step: open a ready order, choose Complete manually, upload proof, enter actual USD cost, complete, and reconcile the ledger.
+
 ## 2026-08-13 - Codex - Sanitized manual-flow browser verification
 
 - Phase / acceptance criterion: complete manual order lifecycle and owner economy verification.
