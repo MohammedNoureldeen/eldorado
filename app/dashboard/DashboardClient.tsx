@@ -37,6 +37,8 @@ function money(minor?: number | null, currency = 'USD'): string { return minor =
 function label(value: string): string { return value.toLowerCase().replaceAll('_', ' ').replace(/(^|\s)\S/g, (letter) => letter.toUpperCase()); }
 function statusTone(status: string): string { return ['COMPLETED', 'APPROVED', 'PROCESSING'].includes(status) ? 'success' : ['FAILED', 'DISPUTED', 'REFUNDED'].includes(status) ? 'danger' : ['READY_FOR_REVIEW', 'CUSTOMER_ACTION_REQUIRED'].includes(status) ? 'warning' : 'neutral'; }
 function initials(name: string): string { return name.split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase(); }
+function hasActiveCredentials(order: Order): boolean { return Boolean(order.credentials && !order.credentials.deletedAt); }
+function canPrepareOrder(order: Order): boolean { return Boolean(order.assignedWorker?.id) && hasActiveCredentials(order); }
 
 export default function DashboardClient() {
   const router = useRouter();
@@ -259,8 +261,10 @@ export default function DashboardClient() {
             <div className="order-state"><span className={`pill ${statusTone(order.status)}`}>{label(order.status)}</span>{order.futOrder && <small>FUT · {label(order.futOrder.submissionState)}</small>}{order.futOrder?.submissionState === 'UNKNOWN' && <small>Do not submit again. Recover by external order ID.</small>}</div>
             <div className="row-actions">
               {user.role === 'OWNER_ADMIN' && <select aria-label="Assigned worker" value={order.assignedWorker?.id ?? ''} onChange={(event) => void assign(order, event.target.value)}><option value="">Unassigned</option>{activeWorkers.map((worker) => <option key={worker.id} value={worker.id}>{worker.name}</option>)}</select>}
-              {order.status === 'DRAFT' && <><button className="button ghost" onClick={() => void addMissingCredentials(order)}>Credentials</button><button className="button" onClick={() => void setStatus(order, 'READY_FOR_REVIEW', 'Order details completed')}>Mark ready</button></>}
-              {order.status === 'READY_FOR_REVIEW' && !order.futOrder && <button className="button" onClick={() => void prepare(order)}>Get live quote</button>}
+              {order.status === 'DRAFT' && <><button className="button ghost" onClick={() => void addMissingCredentials(order)}>{hasActiveCredentials(order) ? 'Update credentials' : 'Add credentials'}</button><button className="button" disabled={!canPrepareOrder(order) || busy} title={!order.assignedWorker?.id ? 'Assign a worker first' : !hasActiveCredentials(order) ? 'Add customer credentials first' : undefined} onClick={() => void setStatus(order, 'READY_FOR_REVIEW', 'Order details completed')}>Mark ready</button></>}
+              {order.status === 'READY_FOR_REVIEW' && !order.futOrder && !hasActiveCredentials(order) && <button className="button ghost" disabled={busy} onClick={() => void addMissingCredentials(order)}>Add credentials</button>}
+              {order.status === 'READY_FOR_REVIEW' && !order.futOrder && hasActiveCredentials(order) && !order.assignedWorker?.id && <button className="button" disabled title="Assign a worker to continue">Assign worker first</button>}
+              {order.status === 'READY_FOR_REVIEW' && !order.futOrder && canPrepareOrder(order) && <button className="button" disabled={busy} onClick={() => void prepare(order)}>Get live quote</button>}
               {order.status === 'READY_FOR_REVIEW' && order.futOrder && <button className="button" onClick={() => void setStatus(order, 'APPROVED', 'Quote reviewed and order approved')}>Approve quote</button>}
               {order.status === 'APPROVED' && order.futOrder?.submissionState !== 'UNKNOWN' && <button className="button confirm" onClick={() => setConfirming(order)}>Review & confirm</button>}
               {order.futOrder?.submissionState === 'UNKNOWN' && <button className="button confirm" onClick={() => void sync(order)}>Recover FUT submission</button>}

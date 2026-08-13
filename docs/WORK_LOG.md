@@ -10,6 +10,18 @@ Mandatory cross-developer handoff. Put the newest entry below this introduction.
 - Verified working copy: `D:\eldorado-main\eldorado-main`.
 - Real FUT calls blocked until test credentials or controlled-test scope is approved.
 
+## 2026-08-13 - Codex - Incomplete-order recovery and readiness guard
+
+- Phase / acceptance criterion: manual order workflow recovery and prerequisite enforcement.
+- Summary: Replaced the unusable live-quote action on ready orders missing customer credentials with an explicit Add credentials recovery action. Draft orders now identify add/update credentials, and Mark ready remains disabled until both an active worker and active credentials exist. The API now rejects any attempt to mark an incomplete order ready.
+- Files changed: `app/dashboard/DashboardClient.tsx`, `src/lib/orders/service.ts`, `scripts/hardening-smoke.ts`, and this log.
+- Migration/schema impact: none.
+- Security/accounting impact: strengthens the encrypted-credential workflow by preventing incomplete orders from entering review; credentials remain write-only in queue responses and are never exposed in the UI.
+- Commands and results: typecheck passed; lint passed with zero warnings/errors; tests passed 25/25; production build passed; database hardening smoke passed with the incomplete-order guard, single-submit concurrency, worker isolation, retention, encryption rotation/deletion, rate limiting, automation stop, and append-only audit checks; live browser inspection confirmed ELD-2026-000009 now shows Add credentials instead of Get live quote, while incomplete drafts keep Mark ready disabled.
+- Decisions needed: none.
+- Blockers: real FUT calls remain blocked until approved test credentials and controlled scope are provided.
+- Exact next step: add credentials to any existing ready order showing the recovery action, then request its live quote.
+
 ## 2026-08-13 - Codex - GitHub main synchronization
 
 - Phase / acceptance criterion: source-control handoff and remote delivery.

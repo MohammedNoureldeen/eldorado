@@ -26,6 +26,9 @@ async function main() {
   const workerActor = { id: worker.id, organizationId: organization.id, role: UserRole.WORKER, status: UserStatus.ACTIVE, name: worker.name, email: worker.email } as const;
   const secondWorkerActor = { id: secondWorker.id, organizationId: organization.id, role: UserRole.WORKER, status: UserStatus.ACTIVE, name: secondWorker.name, email: secondWorker.email } as const;
 
+  const incomplete = await createOrder(workerActor, { marketplaceReference: `hardening-incomplete-${Date.now()}`, customerName: 'Hardening Incomplete Customer', platform: Platform.PC, coinQuantity: 200_000, grossSaleMinor: 10_000, fulfillmentSource: FulfillmentSource.PUBLIC_SUPPLIER });
+  await assert.rejects(() => changeOrderStatus(workerActor, incomplete.id, OrderStatus.READY_FOR_REVIEW, incomplete.version, 'Should remain draft'), /active customer credentials/i);
+
   const created = await createOrder(workerActor, { marketplaceReference: `hardening-confirm-${Date.now()}`, customerName: 'Hardening Concurrency Customer', platform: Platform.PC, coinQuantity: 200_000, grossSaleMinor: 10_000, fulfillmentSource: FulfillmentSource.PUBLIC_SUPPLIER });
   await addCredentials(workerActor, created.id, { email: 'hardening-customer@example.invalid', password: 'sanitized-password', backupCodes: ['sanitized-code'] });
   await changeOrderStatus(workerActor, created.id, OrderStatus.WAITING_FOR_DETAILS, created.version, 'Hardening test details');
@@ -95,7 +98,7 @@ async function main() {
   const unchanged = await db.auditEvent.findUniqueOrThrow({ where: { id: audit.id } });
   assert.equal(unchanged.result, 'SUCCESS');
 
-  console.log(JSON.stringify({ concurrentConfirmations: confirmationResults.length, providerCreates, workerIsolation: true, terminalRetentionDays: 7, rotatedCredentials: rotation.rotated, deletedCredentials: deletedCount, sharedRateLimitAllowed: 10, automationEmergencyStop: true, appendOnlyAudit: true }));
+  console.log(JSON.stringify({ incompleteOrderGuard: true, concurrentConfirmations: confirmationResults.length, providerCreates, workerIsolation: true, terminalRetentionDays: 7, rotatedCredentials: rotation.rotated, deletedCredentials: deletedCount, sharedRateLimitAllowed: 10, automationEmergencyStop: true, appendOnlyAudit: true }));
 }
 
 main().catch((error) => { console.error(error); process.exitCode = 1; }).finally(() => db.$disconnect());

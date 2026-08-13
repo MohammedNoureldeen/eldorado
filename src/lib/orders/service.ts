@@ -169,10 +169,10 @@ export async function changeOrderStatus(actor: Actor, orderId: string, next: Ord
   assert(order, 404, 'Order not found', 'ORDER_NOT_FOUND');
   assertOrderAccess(actor, order, true);
   assert(order.version === version, 409, 'Order changed; reload before updating status', 'ORDER_VERSION_CONFLICT');
-  if (next === OrderStatus.APPROVED || next === OrderStatus.SUBMITTED_TO_FUT) {
-    assert(order.assignedWorkerId, 400, 'Assign a worker before submission');
+  if (next === OrderStatus.READY_FOR_REVIEW || next === OrderStatus.APPROVED || next === OrderStatus.SUBMITTED_TO_FUT) {
+    assert(order.assignedWorkerId, 400, 'Assign a worker before marking the order ready');
     assert(order.coinQuantity > 0 && order.grossSaleMinor > 0, 400, 'Platform, quantity, and sale amount are required');
-    assert(order.credentials?.emailCiphertext && order.credentials.passwordCiphertext && !order.credentials.deletedAt, 400, 'Active customer credentials are required');
+    assert(order.credentials?.emailCiphertext && order.credentials.passwordCiphertext && !order.credentials.deletedAt, 400, 'Add active customer credentials before marking the order ready');
   }
   if (next === OrderStatus.COMPLETED) {
     assert(order.futOrder?.actualCostMinor != null, 400, 'Actual FUT cost is required before completion');
