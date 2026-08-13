@@ -10,6 +10,18 @@ Mandatory cross-developer handoff. Put the newest entry below this introduction.
 - Verified working copy: `D:\eldorado-main\eldorado-main`.
 - Real FUT calls blocked until test credentials or controlled-test scope is approved.
 
+## 2026-08-13 - Codex - Sanitized manual-flow browser verification
+
+- Phase / acceptance criterion: complete manual order lifecycle and owner economy verification.
+- Summary: Completed sanitized order `ELD-2026-000013` through creation, worker assignment, encrypted credentials, readiness, fake-provider quote, approval, explicit single confirmation, provider sync, proof upload, completion, and USD ledger reconciliation in the live local dashboard.
+- Files changed: this log only; no product source changed.
+- Migration/schema impact: none.
+- Security/accounting impact: used fictional customer data and the fake FUT provider only. Reconciled $100.00 revenue, $5.00 marketplace fee, and $17.33 FUT cost. No real FUT request or customer credential was used.
+- Commands and results: browser flow passed; database confirmed one active encrypted credential set, one proof, COMPLETED status, and assigned Operations Worker. The first attempt exposed an invalid local test-key value; the preview was restarted with a valid sanitized 32-byte key set and the complete flow then passed.
+- Decisions needed: none for the manual workflow.
+- Blockers: real FUT validation still requires approved test credentials and controlled scope.
+- Exact next step: repeat this flow with one owner and one real worker during the manual pilot; keep the provider fake until a controlled FUT live-test scope is approved.
+
 ## 2026-08-13 - Codex - Incomplete-order recovery and readiness guard
 
 - Phase / acceptance criterion: manual order workflow recovery and prerequisite enforcement.
