@@ -1,0 +1,24 @@
+[
+  {
+    "orderReference": "ELD-2026-000001",
+    "marketplaceReference": null,
+    "customerName": "Sample Public Customer",
+    "platform": "PLAYSTATION",
+    "coinQuantity": 200000,
+    "grossSaleMinor": 1250,
+    "saleCurrency": "USD",
+    "marketplaceFeeRateBps": 500,
+    "fulfillmentSource": "PUBLIC_SUPPLIER"
+  },
+  {
+    "orderReference": "ELD-2026-000002",
+    "marketplaceReference": "ELDO-SAMPLE-002",
+    "customerName": "Sample Owned Customer",
+    "platform": "XBOX",
+    "coinQuantity": 500000,
+    "grossSaleMinor": 2900,
+    "saleCurrency": "USD",
+    "marketplaceFeeRateBps": 500,
+    "fulfillmentSource": "OWNED_SENDERS"
+  }
+]

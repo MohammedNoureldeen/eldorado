@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 export const ORDER_STATUSES = ['DRAFT', 'WAITING_FOR_DETAILS', 'READY_FOR_REVIEW', 'APPROVED', 'SUBMITTED_TO_FUT', 'PROCESSING', 'CUSTOMER_ACTION_REQUIRED', 'COMPLETED', 'FAILED', 'CANCELLED', 'DISPUTED', 'REFUNDED'] as const;
 export type OrderStatus = typeof ORDER_STATUSES[number];
 export type Platform = 'PC' | 'PLAYSTATION' | 'XBOX';
@@ -47,6 +49,12 @@ export function calculateHandlingRateBps(assignedValidOrders: number, completedC
   return assignedValidOrders <= 0 ? 0 : Math.round((completedCleanOrders / assignedValidOrders) * 10_000);
 }
 
+export function payrollOrderCounts(completedOrders: number, assignedValidOrders: number, completedOrderAdjustment: number): { completedCleanOrders: number; assignedValidOrders: number; handlingRateBps: number } {
+  const completedCleanOrders = Math.max(0, completedOrders + completedOrderAdjustment);
+  const validOrders = Math.max(completedCleanOrders, assignedValidOrders);
+  return { completedCleanOrders, assignedValidOrders: validOrders, handlingRateBps: calculateHandlingRateBps(validOrders, completedCleanOrders) };
+}
+
 export function redactSensitive(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(redactSensitive);
   if (!value || typeof value !== 'object') return value;
@@ -58,6 +66,34 @@ export function closureDeletionDate(closedAt: Date, days = 7): Date {
   const date = new Date(closedAt);
   date.setUTCDate(date.getUTCDate() + days);
   return date;
+}
+
+export const minimumCoinQuantity = 200_000;
+
+export function formatOrderReference(year: number, sequence: number): string {
+  if (!Number.isInteger(year) || year < 2000 || year > 9999) throw new Error('Invalid order-reference year');
+  if (!Number.isSafeInteger(sequence) || sequence < 1 || sequence > 999_999) throw new Error('Invalid order-reference sequence');
+  return `ELD-${year}-${String(sequence).padStart(6, '0')}`;
+}
+
+export function normalizeMarketplaceReference(value?: string | null): string | null {
+  const normalized = value?.trim().replace(/\s+/g, ' ').toUpperCase() ?? '';
+  return normalized || null;
+}
+
+export function normalizeCustomerName(value: string): string {
+  return value.trim().replace(/\s+/g, ' ');
+}
+
+export function createCustomerFingerprint(organizationId: string, customerName: string): string {
+  const normalized = normalizeCustomerName(customerName).toLocaleLowerCase('en-US').normalize('NFKC');
+  return createHash('sha256').update(`${organizationId}\u0000${normalized}`).digest('hex');
+}
+
+export function basisPointAmount(amountMinor: number, rateBps: number): number {
+  if (!Number.isSafeInteger(amountMinor) || amountMinor < 0) throw new Error('Amount must be non-negative integer minor units');
+  if (!Number.isInteger(rateBps) || rateBps < 0 || rateBps > 10_000) throw new Error('Basis-point rate must be between 0 and 10000');
+  return Math.round((amountMinor * rateBps) / 10_000);
 }
 
 export function splitShiftMinutes(events: { type: string; occurredAt: Date }[]): { connectedMinutes: number; breakMinutes: number; unexplainedGapMinutes: number } {

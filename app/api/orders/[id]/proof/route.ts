@@ -1,9 +1,10 @@
-import { NextRequest, NextResponse } from 'next/server';
+﻿import { NextRequest, NextResponse } from 'next/server';
 import { errorResponse } from '@/lib/errors';
 import { assertCsrf, requireSession } from '@/lib/auth/session';
 import { addProof } from '@/lib/orders/service';
 
-export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+  const params = await context.params;
   try {
     const session = await requireSession(request); assertCsrf(request, session);
     const form = await request.formData();
@@ -14,3 +15,4 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     return NextResponse.json(await addProof(session.user, params.id, { type: file.type, size: file.size, bytes }, type), { status: 201 });
   } catch (error) { return errorResponse(error); }
 }
+

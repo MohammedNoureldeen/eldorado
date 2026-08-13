@@ -1,5 +1,7 @@
 # Eldorado FC Coin Operations Platform
 
+> **Active-plan notice (2026-08-13):** The next implementation cycle is governed by [`docs/ACTIVE_MVP_PLAN.md`](docs/ACTIVE_MVP_PLAN.md), [`docs/DECISIONS.md`](docs/DECISIONS.md), and [`docs/WORK_LOG.md`](docs/WORK_LOG.md). They supersede conflicting assumptions below, including mandatory Eldorado IDs, EGP as the main order-reporting currency, admin-led order entry, and placeholder-only provider mapping. Security invariants and historical context below remain applicable.
+
 ## Summary
 
 Build a secure operations platform for managing Eldorado coin orders from receipt through FUT Transfer fulfillment, financial reconciliation, worker performance, payroll, and audit reporting.

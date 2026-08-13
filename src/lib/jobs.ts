@@ -4,6 +4,8 @@ import { db } from '@/lib/db';
 import { deleteExpiredCredentials, syncFutOrder } from '@/lib/orders/service';
 import { deliverPendingTelegram, enqueueTelegram } from '@/lib/notifications/telegram';
 import { defaultFutProvider } from '@/lib/integrations/fut';
+import { env } from '@/lib/config';
+import { deleteExpiredRateLimitBuckets } from '@/lib/security/rate-limit';
 
 export async function enqueueJob(type: string, payload: unknown, organizationId?: string, runAt = new Date()): Promise<string> {
   const job = await db.backgroundJob.create({ data: { type, payloadJson: payload as object, organizationId, runAt } });
@@ -12,12 +14,14 @@ export async function enqueueJob(type: string, payload: unknown, organizationId?
 
 export async function runBackgroundJobs(limit = 20): Promise<{ processed: number; succeeded: number; failed: number }> {
   const workerId = randomUUID();
+  await db.backgroundJob.updateMany({ where: { status: JobStatus.RUNNING, lockedAt: { lt: new Date(Date.now() - env.backgroundJobLeaseMs) } }, data: { status: JobStatus.PENDING, lockedAt: null, lockedBy: null, lastError: 'Recovered after worker lease expired' } });
   const candidates = await db.backgroundJob.findMany({ where: { status: JobStatus.PENDING, runAt: { lte: new Date() } }, take: limit, orderBy: { runAt: 'asc' } });
   let succeeded = 0, failed = 0;
   await deleteExpiredCredentials().catch(() => undefined);
   await deliverPendingTelegram().catch(() => undefined);
-  const overdue = await db.order.findMany({ where: { deadline: { lte: new Date() }, status: { notIn: [OrderStatus.COMPLETED, OrderStatus.FAILED, OrderStatus.CANCELLED, OrderStatus.REFUNDED] } }, take: 50, select: { id: true, organizationId: true, eldoradoOrderId: true } });
-  for (const order of overdue) await enqueueTelegram({ organizationId: order.organizationId, orderId: order.id, type: 'ORDER_OVERDUE', message: `Order ${order.eldoradoOrderId} is overdue.`, dedupeKey: `order-overdue:${order.id}:${new Date().toISOString().slice(0, 10)}`, critical: true }).catch(() => undefined);
+  await deleteExpiredRateLimitBuckets().catch(() => undefined);
+  const overdue = await db.order.findMany({ where: { deadline: { lte: new Date() }, status: { notIn: [OrderStatus.COMPLETED, OrderStatus.FAILED, OrderStatus.CANCELLED, OrderStatus.REFUNDED] } }, take: 50, select: { id: true, organizationId: true, orderReference: true } });
+  for (const order of overdue) await enqueueTelegram({ organizationId: order.organizationId, orderId: order.id, type: 'ORDER_OVERDUE', message: `Order ${order.orderReference} is overdue.`, dedupeKey: `order-overdue:${order.id}:${new Date().toISOString().slice(0, 10)}`, critical: true }).catch(() => undefined);
   for (const candidate of candidates) {
     const claimed = await db.backgroundJob.updateMany({ where: { id: candidate.id, status: JobStatus.PENDING }, data: { status: JobStatus.RUNNING, lockedAt: new Date(), lockedBy: workerId, attempts: { increment: 1 } } });
     if (!claimed.count) continue;

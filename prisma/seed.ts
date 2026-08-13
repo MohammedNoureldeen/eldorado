@@ -13,6 +13,10 @@ async function main() {
   const worker = await prisma.user.upsert({ where: { organizationId_email: { organizationId: organization.id, email: workerEmail } }, update: { passwordHash: await hashPassword(workerPassword), status: UserStatus.ACTIVE }, create: { organizationId: organization.id, email: workerEmail, name: 'Operations Worker', role: UserRole.WORKER, status: UserStatus.ACTIVE, passwordHash: await hashPassword(workerPassword), passwordChangedAt: new Date() } });
   await prisma.workerProfile.upsert({ where: { userId: worker.id }, update: {}, create: { userId: worker.id, organizationId: organization.id, employmentStart: new Date() } });
   await prisma.salaryPolicy.upsert({ where: { id: '00000000-0000-0000-0000-000000000002' }, update: {}, create: { id: '00000000-0000-0000-0000-000000000002', organizationId: organization.id, name: 'Initial salary policy', tiersJson: [{ name: 'under-200', minCompleted: 0, baseSalaryMinor: 300000 }, { name: '200-249', minCompleted: 200, baseSalaryMinor: 350000 }, { name: '250+', minCompleted: 250, baseSalaryMinor: 500000 }], bonusInterval: 10, bonusAmountMinor: 15000, effectiveFrom: new Date('2026-01-01T00:00:00.000Z') } });
+  await prisma.marketplaceFeePolicy.upsert({ where: { id: '00000000-0000-0000-0000-000000000003' }, update: {}, create: { id: '00000000-0000-0000-0000-000000000003', organizationId: organization.id, feeBps: 500, effectiveFrom: new Date('2026-08-13T00:00:00.000Z') } });
+  for (const [key, valueJson] of Object.entries({ workerQuoteVisibility: true, defaultFulfillmentSource: 'PUBLIC_SUPPLIER', automationMode: 'MANUAL', automationKillSwitch: true })) {
+    await prisma.setting.upsert({ where: { organizationId_key: { organizationId: organization.id, key } }, update: {}, create: { organizationId: organization.id, key, valueJson } });
+  }
   console.log(`Seeded ${organization.name}: ${admin.email}, ${worker.email}`);
 }
 

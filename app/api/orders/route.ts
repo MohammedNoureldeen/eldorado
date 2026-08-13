@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Platform } from '@prisma/client';
+import { FulfillmentSource, Platform } from '@prisma/client';
 import { errorResponse } from '@/lib/errors';
 import { assertCsrf, requireSession } from '@/lib/auth/session';
 import { createOrder, listOrders } from '@/lib/orders/service';
@@ -12,7 +12,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const session = await requireSession(request); assertCsrf(request, session);
-    const input = await readJson<{ eldoradoOrderId: string; platform: Platform; coinQuantity: number; grossSaleMinor: number; saleCurrency: string; deadline?: string; assignedWorkerId?: string }>(request);
+    const input = await readJson<{ marketplaceReference?: string; customerName: string; platform: Platform; coinQuantity: number; grossSaleMinor: number; fulfillmentSource: FulfillmentSource; deadline?: string; assignedWorkerId?: string }>(request);
     const result = await createOrder(session.user, input);
     return NextResponse.json(result, { status: 201 });
   } catch (error) { return errorResponse(error); }

@@ -30,6 +30,21 @@ enum Platform {
   XBOX
 }
 
+enum FulfillmentSource {
+  PUBLIC_SUPPLIER
+  OWNED_SENDERS
+}
+
+enum FutSubmissionState {
+  PREPARED
+  CONFIRMING
+  SUBMITTED
+  UNKNOWN
+  FAILED
+  COMPLETED
+  CANCELLED
+}
+
 enum OrderStatus {
   DRAFT
   WAITING_FOR_DETAILS
@@ -115,27 +130,29 @@ enum JobStatus {
 }
 
 model Organization {
-  id                 String              @id @default(uuid()) @db.Uuid
-  name               String
-  baseCurrency       String              @default("EGP") @db.VarChar(3)
-  timezone           String              @default("Africa/Cairo")
-  status             OrganizationStatus  @default(ACTIVE)
-  createdAt          DateTime            @default(now())
-  updatedAt          DateTime            @updatedAt
-  users              User[]
-  workerProfiles     WorkerProfile[]
-  sessions           Session[]
-  shifts             Shift[]
-  orders             Order[]
-  financialEntries   FinancialEntry[]
-  exchangeRates      ExchangeRate[]
-  auditEvents        AuditEvent[]
-  notificationEvents NotificationEvent[]
-  payrollPeriods     PayrollPeriod[]
-  payrollAdjustments PayrollAdjustment[]
-  salaryPolicies     SalaryPolicy[]
-  settings           Setting[]
-  backgroundJobs     BackgroundJob[]
+  id                     String                  @id @default(uuid()) @db.Uuid
+  name                   String
+  baseCurrency           String                  @default("EGP") @db.VarChar(3)
+  timezone               String                  @default("Africa/Cairo")
+  status                 OrganizationStatus      @default(ACTIVE)
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+  users                  User[]
+  workerProfiles         WorkerProfile[]
+  sessions               Session[]
+  shifts                 Shift[]
+  orders                 Order[]
+  financialEntries       FinancialEntry[]
+  exchangeRates          ExchangeRate[]
+  auditEvents            AuditEvent[]
+  notificationEvents     NotificationEvent[]
+  payrollPeriods         PayrollPeriod[]
+  payrollAdjustments     PayrollAdjustment[]
+  salaryPolicies         SalaryPolicy[]
+  settings               Setting[]
+  backgroundJobs         BackgroundJob[]
+  orderReferenceCounters OrderReferenceCounter[]
+  marketplaceFeePolicies MarketplaceFeePolicy[]
 }
 
 model User {
@@ -245,43 +262,77 @@ model ShiftEvent {
 }
 
 model Order {
-  id                  String                  @id @default(uuid()) @db.Uuid
-  organizationId      String                  @db.Uuid
-  eldoradoOrderId     String
-  platform            Platform
-  coinQuantity        Int
-  status              OrderStatus             @default(DRAFT)
-  assignedWorkerId    String?                 @db.Uuid
-  createdById         String                  @db.Uuid
-  deadline            DateTime?
-  grossSaleMinor      Int
-  saleCurrency        String                  @db.VarChar(3)
-  marketplaceFeeMinor Int                     @default(0)
-  refundMinor         Int                     @default(0)
-  paymentFxFeeMinor   Int                     @default(0)
-  version             Int                     @default(1)
-  closedAt            DateTime?
-  reconciledAt        DateTime?
-  createdAt           DateTime                @default(now())
-  updatedAt           DateTime                @updatedAt
-  organization        Organization            @relation(fields: [organizationId], references: [id])
-  assignedWorker      User?                   @relation("OrderAssignedWorker", fields: [assignedWorkerId], references: [id])
-  createdBy           User                    @relation("OrderCreatedBy", fields: [createdById], references: [id])
-  statusHistory       OrderStatusHistory[]
-  credentials         CustomerCredential?
-  credentialAccesses  CredentialAccessEvent[]
-  futOrder            FutOrder?
-  futApiEvents        FutApiEvent[]
-  financialEntries    FinancialEntry[]
-  proofFiles          ProofFile[]
-  notes               OrderNote[]
-  auditEvents         AuditEvent[]
-  notifications       NotificationEvent[]
-  payrollAdjustments  PayrollAdjustment[]
+  id                     String                  @id @default(uuid()) @db.Uuid
+  organizationId         String                  @db.Uuid
+  eldoradoOrderId        String?
+  orderReference         String
+  marketplaceReference   String?
+  customerName           String
+  customerFingerprint    String
+  platform               Platform
+  coinQuantity           Int
+  fulfillmentSource      FulfillmentSource       @default(PUBLIC_SUPPLIER)
+  status                 OrderStatus             @default(DRAFT)
+  assignedWorkerId       String?                 @db.Uuid
+  createdById            String                  @db.Uuid
+  deadline               DateTime?
+  grossSaleMinor         Int
+  saleCurrency           String                  @db.VarChar(3)
+  marketplaceFeeMinor    Int                     @default(0)
+  marketplaceFeeRateBps  Int                     @default(500)
+  marketplaceFeePolicyId String?                 @db.Uuid
+  refundMinor            Int                     @default(0)
+  paymentFxFeeMinor      Int                     @default(0)
+  version                Int                     @default(1)
+  closedAt               DateTime?
+  reconciledAt           DateTime?
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+  organization           Organization            @relation(fields: [organizationId], references: [id])
+  assignedWorker         User?                   @relation("OrderAssignedWorker", fields: [assignedWorkerId], references: [id])
+  createdBy              User                    @relation("OrderCreatedBy", fields: [createdById], references: [id])
+  marketplaceFeePolicy   MarketplaceFeePolicy?   @relation(fields: [marketplaceFeePolicyId], references: [id])
+  statusHistory          OrderStatusHistory[]
+  credentials            CustomerCredential?
+  credentialAccesses     CredentialAccessEvent[]
+  futOrder               FutOrder?
+  futApiEvents           FutApiEvent[]
+  financialEntries       FinancialEntry[]
+  proofFiles             ProofFile[]
+  notes                  OrderNote[]
+  auditEvents            AuditEvent[]
+  notifications          NotificationEvent[]
+  payrollAdjustments     PayrollAdjustment[]
 
-  @@unique([organizationId, eldoradoOrderId])
+  @@unique([organizationId, orderReference])
+  @@unique([organizationId, marketplaceReference])
   @@index([organizationId, status, deadline])
   @@index([assignedWorkerId, status])
+  @@index([organizationId, customerFingerprint, platform, coinQuantity, grossSaleMinor, createdAt], map: "Order_duplicate_warning_idx")
+}
+
+model OrderReferenceCounter {
+  organizationId String       @db.Uuid
+  year           Int
+  nextValue      Int          @default(1)
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  @@id([organizationId, year])
+}
+
+model MarketplaceFeePolicy {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  feeBps         Int          @default(500)
+  effectiveFrom  DateTime
+  effectiveTo    DateTime?
+  active         Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  orders         Order[]
+
+  @@index([organizationId, active, effectiveFrom])
 }
 
 model OrderStatusHistory {
@@ -331,22 +382,35 @@ model CredentialAccessEvent {
 }
 
 model FutOrder {
-  id                    String        @id @default(uuid()) @db.Uuid
-  orderId               String        @unique @db.Uuid
+  id                    String             @id @default(uuid()) @db.Uuid
+  orderId               String             @unique @db.Uuid
   providerOrderId       String?
-  idempotencyKey        String        @unique
+  motherOrderId         String?
+  externalOrderId       String             @unique
+  idempotencyKey        String             @unique
   correlationId         String
-  status                FutStatus     @default(PREPARED)
+  status                FutStatus          @default(PREPARED)
+  submissionState       FutSubmissionState @default(PREPARED)
+  fulfillmentSource     FulfillmentSource
+  supplierId            String?
+  supplierHash          String?
+  isPublicSupplier      Boolean?
+  senderGroup           String?
+  transferMethod        String?
+  riskLevel             String?
   requestSnapshotJson   Json?
   estimatedCostMinor    Int?
-  estimatedCostCurrency String?       @db.VarChar(3)
+  estimatedCostCurrency String?            @db.VarChar(3)
   actualCostMinor       Int?
-  actualCostCurrency    String?       @db.VarChar(3)
+  actualCostCurrency    String?            @db.VarChar(3)
   submittedAt           DateTime?
+  quoteFetchedAt        DateTime?
+  quoteExpiresAt        DateTime?
+  lastSyncedAt          DateTime?
   completedAt           DateTime?
-  createdAt             DateTime      @default(now())
-  updatedAt             DateTime      @updatedAt
-  order                 Order         @relation(fields: [orderId], references: [id])
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+  order                 Order              @relation(fields: [orderId], references: [id])
   apiEvents             FutApiEvent[]
 
   @@index([status, updatedAt])
@@ -596,4 +660,13 @@ model BackgroundJob {
   organization   Organization? @relation(fields: [organizationId], references: [id])
 
   @@index([status, runAt])
+}
+
+model RateLimitBucket {
+  keyHash   String   @id @db.VarChar(64)
+  count     Int
+  expiresAt DateTime
+  updatedAt DateTime @updatedAt
+
+  @@index([expiresAt])
 }

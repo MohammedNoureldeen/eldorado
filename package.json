@@ -14,6 +14,10 @@
     "db:migrate": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
     "db:smoke": "tsx scripts/db-smoke.ts",
+    "hardening:smoke": "tsx scripts/hardening-smoke.ts",
+    "backup:crypto": "tsx scripts/backup-crypto.ts",
+    "backup:verify": "tsx scripts/backup-verify.ts",
+    "load:smoke": "tsx scripts/load-smoke.ts",
     "smoke": "tsx scripts/smoke.ts"
   },
   "dependencies": {
@@ -21,18 +25,22 @@
     "@aws-sdk/s3-request-presigner": "^3.1103.0",
     "@prisma/client": "^6.9.0",
     "argon2": "^0.41.1",
-    "next": "^14.2.30",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "next": "15.5.21",
+    "react": "19.1.0",
+    "react-dom": "19.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.13.4",
-    "@types/react": "^18.3.18",
-    "@types/react-dom": "^18.3.5",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
     "eslint": "^8.57.1",
-    "eslint-config-next": "^14.2.35",
+    "eslint-config-next": "15.5.21",
     "prisma": "^6.9.0",
     "tsx": "^4.19.3",
     "typescript": "^5.7.3"
+  },
+  "overrides": {
+    "postcss": "8.5.26",
+    "sharp": "0.35.3"
   }
 }

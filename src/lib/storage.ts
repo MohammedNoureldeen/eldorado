@@ -24,6 +24,7 @@ function client(): S3Client {
 }
 
 export async function putPrivateProof(key: string, bytes: Buffer, mimeType: string, checksum: string): Promise<void> {
+  if (env.proofStorageMode === 'memory') return;
   await client().send(new PutObjectCommand({ Bucket: env.s3Bucket, Key: key, Body: bytes, ContentType: mimeType, ChecksumSHA256: Buffer.from(checksum, 'hex').toString('base64'), ServerSideEncryption: 'AES256' }));
 }
 
@@ -46,5 +47,6 @@ export async function scanProof(bytes: Buffer, mimeType: string): Promise<void> 
 }
 
 export async function signedProofUrl(key: string): Promise<string> {
+  if (env.proofStorageMode === 'memory') throw new AppError(404, 'Local test proofs are not persisted for download', 'LOCAL_PROOF_NOT_PERSISTED');
   return getSignedUrl(client(), new GetObjectCommand({ Bucket: env.s3Bucket, Key: key }), { expiresIn: env.s3SignedUrlTtlSeconds });
 }

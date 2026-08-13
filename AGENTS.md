@@ -2,6 +2,28 @@
 
 This file gives any AI assistant complete context on what this project is, everything implemented so far, how to verify work, and the rules that must never be broken.
 
+## 0. Active-plan and collaboration protocol (mandatory)
+
+The active working copy is `D:\eldorado-main\eldorado-main`. Do not create or treat a C: drive copy as the authoritative project. Project code, migrations, documentation, fixtures, and deliverables must remain in the D: working copy. Temporary tool staging outside D: is not authoritative.
+
+Before changing anything, every developer or AI assistant must read, in order:
+
+1. `AGENTS.md`
+2. `docs/ACTIVE_MVP_PLAN.md`
+3. `docs/DECISIONS.md`
+4. `docs/WORK_LOG.md`
+5. `PROJECT_PLAN.md` and `docs/PHASES.md` when touching scope or business behavior
+
+`docs/ACTIVE_MVP_PLAN.md` is the current MVP source of truth and supersedes conflicting older assumptions. It uses generated internal references, hybrid public/owned fulfillment, USD order accounting, worker-operated entry, explicit manual FUT confirmation for MVP, and an automation-ready submission service.
+
+For every completed or paused task:
+
+- Update `docs/WORK_LOG.md` with changed files, migrations, security/accounting impact, exact verification results, blockers, and next step.
+- Update `docs/DECISIONS.md` when the owner approves or changes a decision.
+- Update `docs/ACTIVE_MVP_PLAN.md` and `docs/PHASES.md` when scope, acceptance criteria, or phase status changes.
+- Never silently change money, credential, authorization, fulfillment, provider, or automation assumptions.
+- Never claim a phase complete without exit criteria and recorded evidence.
+
 ## 1. What this project is
 
 A secure internal operations platform for a small FC-coin resale business (1 owner/admin + 2 workers). It manages manual Eldorado marketplace orders from intake through FUT Transfer fulfillment, financial reconciliation, worker KPIs, and monthly payroll.
@@ -16,14 +38,14 @@ Eldorado order (entered manually) → assignment → credential validation → F
 Deliberate scope limits (do not "improve" past these without explicit owner sign-off):
 
 - No automatic Eldorado order import; orders are entered manually.
-- FUT purchases always require human confirmation; no auto-submit.
+- FUT purchases require human confirmation throughout the MVP pilot. A guarded automation foundation exists but defaults to `MANUAL` with the kill switch active and must not be activated before the recorded gates and owner sign-off.
 - No Eldorado pause/unpause monitoring.
 - No worker surveillance (no screenshots/keystrokes); shifts are explicit clock events + dashboard heartbeat only.
 
 ## 2. Tech stack
 
-- Next.js 14 (App Router) + React 18 + TypeScript (strict), path alias `@/*` → `src/*`.
-- PostgreSQL 15+ via Prisma ORM (`prisma/schema.prisma`, one migration `20260805000000_init`).
+- Next.js 15 (App Router) + React 19 + TypeScript (strict), path alias `@/*` → `src/*`.
+- PostgreSQL 15+ via Prisma ORM (`prisma/schema.prisma`, three additive migrations including MVP v2 domain and shared rate limits).
 - Auth: Argon2id passwords, DB-backed opaque sessions (HMAC-hashed tokens), double-submit CSRF cookies, optional admin TOTP 2FA.
 - Storage: S3-compatible private bucket for delivery proofs (`@aws-sdk/client-s3` + presigner).
 - Deployment: Vercel; `vercel.json` cron hits `/api/jobs/run` every 5 minutes (Bearer `HEALTHCHECK_TOKEN`).
@@ -40,7 +62,7 @@ All application code was delivered in a single initial commit ("Initial Eldorado
 - Append-only triggers on audit/financial tables (migration SQL rejects UPDATE/DELETE).
 - Auth: `src/lib/auth/` — `password.ts` (Argon2id), `session.ts` (cookies, CSRF, requireSession), `totp.ts` (admin 2FA, ±1 step), `rbac.ts` (role scoping).
 - Middleware (`middleware.ts`): HTTP→HTTPS redirect in production for `/api`, `/dashboard`, `/login`.
-- Rate limiting (`src/lib/security/rate-limit.ts`) — NOTE: process-local.
+- Rate limiting (`src/lib/security/rate-limit.ts`) uses atomic shared PostgreSQL buckets for login enforcement; a process-local helper remains for isolated unit tests.
 - Config loader `src/lib/config.ts`; audit writer `src/lib/audit.ts`; error mapping `src/lib/errors.ts`; API helpers `src/lib/api.ts`.
 
 ### 3.2 Manual MVP (done)
@@ -59,10 +81,15 @@ All application code was delivered in a single initial commit ("Initial Eldorado
 - Payroll `src/lib/payroll.ts`: draft → approve → paid lifecycle; `calculatePayroll` in `domain.ts` implements the tiered policy (default: <200 clean orders = 3,000 EGP; 200–249 = 3,500; 250+ = 5,000 + 150 EGP per full 10-order block above 250; thresholds configurable via `SalaryPolicy`).
 - Telegram queue `src/lib/notifications/telegram.ts`: enqueue + `deliverPendingTelegram` via background jobs; payloads never contain credentials (`redactSensitive`).
 
-### 3.4 FUT Transfer integration (done, sandbox/placeholder)
+### 3.4 FUT Transfer integration (contract implemented; controlled live verification gated)
 
-- `src/lib/integrations/fut.ts`: `HttpFutProvider` with prepare/price, confirm/submit (order UUID as idempotency key), status sync, cancel, balance; bounded retries + exponential backoff, timeouts, circuit breaker, provider-status → internal-status mapping (`mapFutStatus`), sanitized `FutApiEvent` logging via `redactSensitive`, correlation IDs.
-- Endpoint paths in the adapter are GENERIC PLACEHOLDERS on purpose. Do not point them at a real provider until the discovery gate in `docs/OPERATIONS.md` is complete.
+- `src/lib/integrations/fut.ts` implements the public FUT Transfer Postman contract: public supplier conditions/purchase, owned capacity/order, balance, status by provider/external ID, correction, resume/stop, strict response mapping, sanitized metadata, and no automatic mutation retry.
+- Public documentation exposed no sandbox. Do not point it at real credentials until the controlled checklist in `docs/FUT_TRANSFER_CONTRACT.md` is owner-approved.
+
+### 3.8 Hardening and controlled automation foundation
+
+- Shared DB login limits, credential key rotation/retention reporting, CSP/HSTS/no-store headers, encrypted backup verification, concurrency/load smoke, and browser authorization evidence are recorded in `docs/HARDENING_EVIDENCE.md`.
+- `src/lib/automation.ts` supplies `MANUAL`/`LIMIT_BASED`/`AUTOMATIC` policy, strict eligibility checks, protected activation acknowledgement, audited evaluation, and emergency stop. Manual + kill switch is the default; activation remains an external gate.
 
 ### 3.5 Background jobs (done)
 
@@ -86,7 +113,7 @@ All application code was delivered in a single initial commit ("Initial Eldorado
 | Shifts | `shifts`, `shifts/events` |
 | Payroll | `payroll`, `payroll/[id]/approve` |
 | Reports | `reports/summary`, `reports/export` |
-| Admin | `admin/workers`, `admin/sessions/revoke`, `settings` |
+| Admin | `admin/workers`, `admin/sessions/revoke`, `admin/economy`, `admin/audit`, `admin/security/retention`, `admin/security/rotate-credentials`, `admin/automation`, `settings` |
 | Ops | `health`, `integrations/fut/balance`, `jobs/run` (cron, Bearer token) |
 
 All mutating browser requests require CSRF header; authorization is enforced in the service layer (`requireSession` + role + organization + assignment checks), not just at the route.
@@ -116,7 +143,7 @@ Local setup: `npm install` → `Copy-Item .env.example .env` (set `DATABASE_URL`
 2. Timestamps stored in UTC. Cairo conversion is display-only.
 3. Customer credentials: encrypted at field level (AES-256-GCM, versioned keys), never in logs, responses, list/detail APIs, Telegram, CSV exports, FUT event snapshots, or URLs. Reveal requires authorization + reason + audit event. Deleted 7 days after order closure.
 4. Audit and financial history is append-only (DB triggers). Corrections = new rows with actor + reason; never UPDATE/DELETE history.
-5. FUT submission requires human confirmation, the order UUID as idempotency key, and optimistic version check.
+5. During the MVP pilot FUT submission requires human confirmation. Any later automation uses the same durable submission claim, order UUID recovery key, optimistic version check, strict owner policy, audit, and kill switch.
 6. Provider secrets are server-side env vars only; never accepted from the browser, never committed.
 7. Role boundaries: workers only touch assigned active orders; payroll approval, settings, workers, and reconciliation are admin-only.
 8. Refunded/charged-back orders lose KPI credit; payroll is immutable after `PAID` (later reversals go to the next period as adjustments).
@@ -137,7 +164,8 @@ app/                       Next.js App Router: login, dashboard, all API routes
 src/lib/domain.ts          State machine, payroll calc, profit calc, redaction, retention date
 src/lib/orders/service.ts  Order lifecycle service (the core business logic)
 src/lib/ledger.ts          Financial entries, FX, refunds, reconciliation
-src/lib/integrations/fut.ts FUT HTTP adapter (placeholder paths)
+src/lib/integrations/fut.ts Public FUT Transfer contract adapter
+src/lib/automation.ts      Fail-closed controlled automation policy/executor
 src/lib/crypto/secrets.ts  Credential encryption/decryption
 src/lib/auth/              sessions, passwords, TOTP, RBAC
 src/lib/jobs.ts            Background job queue runner
@@ -155,11 +183,11 @@ scripts/                   smoke + db-smoke verification scripts
 
 ## 9. What is NOT done (external gates / future work)
 
-- FUT provider discovery gate: real endpoints, auth, rate limits, sandbox fixtures, permission to automate (`docs/OPERATIONS.md`). Adapter paths are placeholders until then.
+- FUT controlled live gate: approved credentials/scope, success/failure/UNKNOWN recovery, leak checks, and permission to automate (`docs/FUT_TRANSFER_CONTRACT.md`).
 - Real Telegram recipients, fee/FX rule configuration, Eldorado account workflow notices.
-- Separate staging/production environments, managed backups + restore rehearsal, dependency/vulnerability scanning, load/concurrency testing, security review.
+- Separate managed staging/production environments, managed backup/SLA, dependency monitoring, error/uptime monitoring, storage expiry verification, and security review. Local sanitized backup/restore and load/concurrency rehearsals are complete.
 - Pilot gate: owner + 1 worker must complete ≥50 real orders with no unexplained financial difference.
-- Move rate limiting + FUT circuit breaker to shared storage (Redis/DB) before running multiple instances (currently process-local).
+- Move the optional FUT circuit-breaker state to shared storage if global throttling is required; submission correctness and login rate limiting already use PostgreSQL.
 - Optional: Sentry, malware scanner, uptime monitoring wiring.
 - Future (not v1): customer self-entry links, permitted Eldorado automation.
 

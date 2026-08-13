@@ -5,7 +5,7 @@ import { verifyPassword } from '@/lib/auth/password';
 import { verifyTotp } from '@/lib/auth/totp';
 import { createSession, applyAuthCookies } from '@/lib/auth/session';
 import { decryptSecret } from '@/lib/crypto/secrets';
-import { checkRateLimit } from '@/lib/security/rate-limit';
+import { checkSharedRateLimit } from '@/lib/security/rate-limit';
 import { requestIp, readJson } from '@/lib/api';
 
 export async function POST(request: NextRequest) {
@@ -14,7 +14,7 @@ export async function POST(request: NextRequest) {
     const email = input.email?.trim().toLowerCase() ?? '';
     const password = input.password ?? '';
     const ip = requestIp(request) ?? 'unknown';
-    const rate = checkRateLimit(`login:${ip}:${email}`, 10, 15 * 60_000);
+    const rate = await checkSharedRateLimit(`login:${ip}:${email}`, 10, 15 * 60_000);
     if (!rate.allowed) return NextResponse.json({ error: 'Too many login attempts' }, { status: 429, headers: { 'retry-after': String(rate.retryAfterSeconds) } });
     const user = await db.user.findFirst({ where: { email }, include: { workerProfile: true } });
     if (!user || user.status !== 'ACTIVE' || !(await verifyPassword(user.passwordHash, password).catch(() => false))) throw new AppError(401, 'Invalid email or password', 'INVALID_LOGIN');

@@ -1,9 +1,8 @@
 import { FinancialEntryType, OrderStatus, PayrollStatus, Prisma, UserRole } from '@prisma/client';
 import { db } from '@/lib/db';
 import { AppError, assert } from '@/lib/errors';
-import { calculateProfit } from '@/lib/domain';
+import { assertTransition, calculateProfit, closureDeletionDate } from '@/lib/domain';
 import { AuthUser, assertRole } from '@/lib/auth/rbac';
-import { changeOrderStatus } from '@/lib/orders/service';
 
 const RATE_SCALE = 100_000_000n;
 
@@ -58,8 +57,7 @@ export async function reconcileOrder(actor: Actor, orderId: string, exchangeRate
     if (!locked.count) return;
     for (const line of lines) {
       const rate = line.currency === 'EGP' ? '1' : exchangeRates[line.currency];
-      assert(rate, 400, `Missing locked EGP exchange rate for ${line.currency}`);
-      await tx.financialEntry.create({ data: { organizationId: actor.organizationId, orderId, type: line.type, amountMinor: line.amountMinor, currency: line.currency, egpAmountMinor: convertMinorToEgp(line.amountMinor, rate), exchangeRate: new Prisma.Decimal(rate), source: 'reconciliation', createdById: actor.id } });
+      await tx.financialEntry.create({ data: { organizationId: actor.organizationId, orderId, type: line.type, amountMinor: line.amountMinor, currency: line.currency, egpAmountMinor: rate ? convertMinorToEgp(line.amountMinor, rate) : undefined, exchangeRate: rate ? new Prisma.Decimal(rate) : undefined, source: 'reconciliation', createdById: actor.id } });
     }
     await tx.auditEvent.create({ data: { organizationId: actor.organizationId, actorId: actor.id, orderId, action: 'ORDER_RECONCILED', entityType: 'ORDER', entityId: orderId, result: 'SUCCESS', metadataJson: { entries: lines.map((line) => ({ type: line.type, amountMinor: line.amountMinor, currency: line.currency })) } } });
   });
@@ -76,20 +74,31 @@ export async function orderProfit(orderId: string, organizationId: string): Prom
 export async function applyRefund(actor: Actor, orderId: string, input: { amountMinor: number; currency: string; exchangeRate: string; reason: string }): Promise<void> {
   assertRole(actor as AuthUser, UserRole.OWNER_ADMIN);
   assert(input.amountMinor > 0 && Number.isSafeInteger(input.amountMinor), 400, 'Refund amount must be a positive integer minor unit');
+  assert(/^[A-Z]{3}$/.test(input.currency), 400, 'Currency must be a three-letter ISO code');
+  assert(input.reason.trim().length >= 3, 400, 'Refund reason is required');
   const order = await db.order.findFirst({ where: { id: orderId, organizationId: actor.organizationId } });
   assert(order, 404, 'Order not found', 'ORDER_NOT_FOUND');
   assert(order.status !== OrderStatus.REFUNDED, 409, 'Order is already refunded', 'ORDER_ALREADY_REFUNDED');
+  assertTransition(order.status, OrderStatus.REFUNDED);
   const closedAt = order.closedAt ?? new Date();
-  await addFinancialEntry(actor, orderId, { type: FinancialEntryType.REFUND, amountMinor: input.amountMinor, currency: input.currency, exchangeRate: input.exchangeRate, reason: input.reason });
-  await changeOrderStatus(actor, orderId, OrderStatus.REFUNDED, order.version, input.reason, 'manual-refund');
-  if (!order.assignedWorkerId) return;
-  const sourcePeriod = await db.payrollPeriod.findFirst({ where: { organizationId: actor.organizationId, monthStart: { lte: closedAt }, monthEnd: { gt: closedAt }, status: { in: [PayrollStatus.APPROVED, PayrollStatus.PAID] } } });
-  if (!sourcePeriod) return;
-  const nextStart = new Date(Date.UTC(sourcePeriod.monthStart.getUTCFullYear(), sourcePeriod.monthStart.getUTCMonth() + 1, 1));
-  const nextEnd = new Date(Date.UTC(nextStart.getUTCFullYear(), nextStart.getUTCMonth() + 1, 1));
-  const nextPeriod = await db.payrollPeriod.upsert({ where: { organizationId_monthStart: { organizationId: actor.organizationId, monthStart: nextStart } }, create: { organizationId: actor.organizationId, monthStart: nextStart, monthEnd: nextEnd }, update: {} });
-  if (nextPeriod.status === PayrollStatus.DRAFT) {
-    await db.payrollAdjustment.upsert({ where: { payrollPeriodId_orderId: { payrollPeriodId: nextPeriod.id, orderId } }, create: { organizationId: actor.organizationId, payrollPeriodId: nextPeriod.id, workerId: order.assignedWorkerId, orderId, completedOrderDelta: -1, reason: `Refund reversal: ${input.reason}`, createdById: actor.id }, update: {} });
-  }
-  await db.auditEvent.create({ data: { organizationId: actor.organizationId, actorId: actor.id, orderId, action: 'PAYROLL_REFUND_REVERSAL_CREATED', entityType: 'PAYROLL_ADJUSTMENT', result: 'SUCCESS', metadataJson: { payrollPeriodId: nextPeriod.id, completedOrderDelta: -1 } } });
+  const egpAmountMinor = convertMinorToEgp(input.amountMinor, input.exchangeRate);
+  const reason = input.reason.trim().slice(0, 500);
+  await db.$transaction(async (tx) => {
+    const locked = await tx.order.updateMany({ where: { id: order.id, organizationId: actor.organizationId, version: order.version, status: order.status }, data: { status: OrderStatus.REFUNDED, closedAt, version: { increment: 1 } } });
+    if (!locked.count) throw new AppError(409, 'Order changed; reload before refunding', 'ORDER_VERSION_CONFLICT');
+    const entry = await tx.financialEntry.create({ data: { organizationId: actor.organizationId, orderId, type: FinancialEntryType.REFUND, amountMinor: input.amountMinor, currency: input.currency, egpAmountMinor, exchangeRate: new Prisma.Decimal(input.exchangeRate), source: 'manual-refund', reason, createdById: actor.id } });
+    await tx.customerCredential.updateMany({ where: { orderId, deletedAt: null }, data: { deletionDueAt: closureDeletionDate(closedAt) } });
+    await tx.orderStatusHistory.create({ data: { orderId, previous: order.status, next: OrderStatus.REFUNDED, actorId: actor.id, reason, source: 'manual-refund' } });
+    await tx.auditEvent.create({ data: { organizationId: actor.organizationId, actorId: actor.id, orderId, action: 'FINANCIAL_ENTRY_CREATED', entityType: 'FINANCIAL_ENTRY', entityId: entry.id, result: 'SUCCESS', metadataJson: { type: FinancialEntryType.REFUND, amountMinor: input.amountMinor, currency: input.currency, egpAmountMinor, reason } } });
+    await tx.auditEvent.create({ data: { organizationId: actor.organizationId, actorId: actor.id, orderId, action: 'ORDER_STATUS_CHANGED', entityType: 'ORDER', entityId: order.id, result: 'SUCCESS', metadataJson: { previous: order.status, next: OrderStatus.REFUNDED, reason, source: 'manual-refund' } } });
+    if (!order.assignedWorkerId) return;
+    const sourcePeriod = await tx.payrollPeriod.findFirst({ where: { organizationId: actor.organizationId, monthStart: { lte: closedAt }, monthEnd: { gt: closedAt }, status: { in: [PayrollStatus.APPROVED, PayrollStatus.PAID] } } });
+    if (!sourcePeriod) return;
+    const nextStart = new Date(Date.UTC(sourcePeriod.monthStart.getUTCFullYear(), sourcePeriod.monthStart.getUTCMonth() + 1, 1));
+    const nextEnd = new Date(Date.UTC(nextStart.getUTCFullYear(), nextStart.getUTCMonth() + 1, 1));
+    const nextPeriod = await tx.payrollPeriod.upsert({ where: { organizationId_monthStart: { organizationId: actor.organizationId, monthStart: nextStart } }, create: { organizationId: actor.organizationId, monthStart: nextStart, monthEnd: nextEnd }, update: {} });
+    if (nextPeriod.status !== PayrollStatus.DRAFT) return;
+    await tx.payrollAdjustment.upsert({ where: { payrollPeriodId_orderId: { payrollPeriodId: nextPeriod.id, orderId } }, create: { organizationId: actor.organizationId, payrollPeriodId: nextPeriod.id, workerId: order.assignedWorkerId, orderId, completedOrderDelta: -1, reason: `Refund reversal: ${reason}`, createdById: actor.id }, update: {} });
+    await tx.auditEvent.create({ data: { organizationId: actor.organizationId, actorId: actor.id, orderId, action: 'PAYROLL_REFUND_REVERSAL_CREATED', entityType: 'PAYROLL_ADJUSTMENT', result: 'SUCCESS', metadataJson: { payrollPeriodId: nextPeriod.id, completedOrderDelta: -1 } } });
+  });
 }

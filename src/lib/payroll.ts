@@ -1,7 +1,7 @@
 import { OrderStatus, PayrollStatus, UserRole } from '@prisma/client';
 import { db } from '@/lib/db';
 import { AppError, assert } from '@/lib/errors';
-import { calculateHandlingRateBps, calculatePayroll, SalaryPolicyInput } from '@/lib/domain';
+import { calculatePayroll, payrollOrderCounts, SalaryPolicyInput } from '@/lib/domain';
 import { AuthUser, assertRole } from '@/lib/auth/rbac';
 
 const defaultPolicy: SalaryPolicyInput = { tiers: [{ name: 'under-200', minCompleted: 0, baseSalaryMinor: 300_000 }, { name: '200-249', minCompleted: 200, baseSalaryMinor: 350_000 }, { name: '250+', minCompleted: 250, baseSalaryMinor: 500_000 }], bonusInterval: 10, bonusAmountMinor: 15_000 };
@@ -31,8 +31,11 @@ export async function buildPayrollDraft(actor: Actor, month: string): Promise<{ 
   const policy = await policyFor(actor.organizationId, start);
   const workers = await db.user.findMany({ where: { organizationId: actor.organizationId, role: UserRole.WORKER }, select: { id: true } });
   const completed = await db.order.findMany({ where: { organizationId: actor.organizationId, status: OrderStatus.COMPLETED, reconciledAt: { not: null }, closedAt: { gte: start, lt: end } }, select: { assignedWorkerId: true } });
+  const assigned = await db.order.findMany({ where: { organizationId: actor.organizationId, assignedWorkerId: { not: null }, closedAt: { gte: start, lt: end }, status: { in: [OrderStatus.COMPLETED, OrderStatus.FAILED, OrderStatus.DISPUTED, OrderStatus.REFUNDED] } }, select: { assignedWorkerId: true } });
   const validByWorker = new Map<string, number>();
   for (const order of completed) if (order.assignedWorkerId) validByWorker.set(order.assignedWorkerId, (validByWorker.get(order.assignedWorkerId) ?? 0) + 1);
+  const assignedByWorker = new Map<string, number>();
+  for (const order of assigned) if (order.assignedWorkerId) assignedByWorker.set(order.assignedWorkerId, (assignedByWorker.get(order.assignedWorkerId) ?? 0) + 1);
   const adjustments = await db.payrollAdjustment.findMany({ where: { payrollPeriodId: period.id }, select: { workerId: true, completedOrderDelta: true, amountMinor: true } });
   const adjustmentsByWorker = new Map<string, { completedOrderDelta: number; amountMinor: number }>();
   for (const adjustment of adjustments) {
@@ -43,9 +46,9 @@ export async function buildPayrollDraft(actor: Actor, month: string): Promise<{ 
     await tx.payrollEntry.deleteMany({ where: { payrollPeriodId: period.id } });
     for (const worker of workers) {
       const adjustment = adjustmentsByWorker.get(worker.id) ?? { completedOrderDelta: 0, amountMinor: 0 };
-      const completedCleanOrders = Math.max(0, (validByWorker.get(worker.id) ?? 0) + adjustment.completedOrderDelta);
+      const { completedCleanOrders, assignedValidOrders, handlingRateBps } = payrollOrderCounts(validByWorker.get(worker.id) ?? 0, assignedByWorker.get(worker.id) ?? 0, adjustment.completedOrderDelta);
       const result = calculatePayroll(completedCleanOrders, policy);
-      await tx.payrollEntry.create({ data: { payrollPeriodId: period.id, workerId: worker.id, completedCleanOrders, assignedValidOrders: completedCleanOrders, handlingRateBps: calculateHandlingRateBps(completedCleanOrders, completedCleanOrders), tier: result.tier, baseSalaryMinor: result.baseSalaryMinor, bonusMinor: result.bonusMinor, adjustmentsMinor: adjustment.amountMinor, finalAmountMinor: result.finalAmountMinor + adjustment.amountMinor } });
+      await tx.payrollEntry.create({ data: { payrollPeriodId: period.id, workerId: worker.id, completedCleanOrders, assignedValidOrders, handlingRateBps, tier: result.tier, baseSalaryMinor: result.baseSalaryMinor, bonusMinor: result.bonusMinor, adjustmentsMinor: adjustment.amountMinor, finalAmountMinor: result.finalAmountMinor + adjustment.amountMinor } });
     }
     await tx.auditEvent.create({ data: { organizationId: actor.organizationId, actorId: actor.id, action: 'PAYROLL_DRAFT_BUILT', entityType: 'PAYROLL_PERIOD', entityId: period.id, result: 'SUCCESS', metadataJson: { month, workerCount: workers.length } } });
   });
@@ -63,6 +66,13 @@ export async function markPayrollPaid(actor: Actor, payrollId: string): Promise<
   assertRole(actor as AuthUser, UserRole.OWNER_ADMIN);
   const result = await db.payrollPeriod.updateMany({ where: { id: payrollId, organizationId: actor.organizationId, status: PayrollStatus.APPROVED }, data: { status: PayrollStatus.PAID, paidAt: new Date() } });
   if (!result.count) throw new AppError(409, 'Only approved payroll can be marked paid', 'PAYROLL_IMMUTABLE');
+  await db.auditEvent.create({ data: { organizationId: actor.organizationId, actorId: actor.id, action: 'PAYROLL_MARKED_PAID', entityType: 'PAYROLL_PERIOD', entityId: payrollId, result: 'SUCCESS' } });
+}
+
+export async function listPayrollPeriods(actor: Actor): Promise<unknown[]> {
+  assertRole(actor as AuthUser, UserRole.OWNER_ADMIN);
+  const periods = await db.payrollPeriod.findMany({ where: { organizationId: actor.organizationId }, include: { entries: { include: { worker: { select: { id: true, name: true, email: true } } }, orderBy: { worker: { name: 'asc' } } } }, orderBy: { monthStart: 'desc' }, take: 24 });
+  return periods.map((period) => ({ ...period, totalMinor: period.entries.reduce((total, entry) => total + entry.finalAmountMinor, 0) }));
 }
 
 export async function payrollSummary(actor: Actor, payrollId: string): Promise<unknown> {

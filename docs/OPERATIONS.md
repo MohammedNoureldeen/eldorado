@@ -6,7 +6,7 @@ Do not point the adapter at a real provider until all items below are signed off
 
 - Move any Postman secrets into a private environment and rotate every previously shared credential.
 - Record the approved base URL, authentication scheme, required headers, token expiry, rate limits, sandbox/production separation, and support contact.
-- Map the provider's price, balance, create, status, cancellation, and error responses to the internal adapter. Unknown statuses remain `PROCESSING` and must be reviewed.
+- Map the provider's price, balance, create, status, cancellation, and error responses to the internal adapter. Unknown statuses fail closed to `CUSTOMER_ACTION_REQUIRED`/admin review and must never be treated as normal processing.
 - Confirm server-side automation and human-confirmed purchases are permitted by the provider and relevant game/platform rules.
 - Replace real customer credentials with sanitized fixtures. Credentials must never appear in fixtures, request snapshots, logs, Telegram messages, exports, or analytics.
 - Run success, timeout, malformed response, price-change, low-balance, authentication-failure, and retry-exhaustion tests in sandbox.
@@ -45,6 +45,16 @@ Use a disposable staging database, never production:
 3. Run `npm run db:migrate`, `npm run db:seed` only if the rehearsal requires seed data, then `npm run typecheck`, `npm test`, and `npm run build`.
 4. Verify an order timeline, ledger reconciliation, payroll draft, audit events, and credential deletion state.
 5. Record restore start/end time, row counts, missing objects, and the owner sign-off. Repeat at least quarterly.
+
+Repository helpers: `npm run backup:crypto -- encrypt|decrypt ...` performs AES-256-GCM envelope encryption; `npm run backup:verify` records migration/table/sample invariants after restore. Never leave a plaintext dump on disk after validation. See `docs/HARDENING_EVIDENCE.md` for the sanitized rehearsal.
+
+## Controlled automation gate
+
+- Keep `MANUAL` mode and the kill switch active throughout the manual pilot.
+- Before any activation, verify the live FUT contract, set explicit USD/coin/margin/balance/risk/failure/quote-age limits and allowed platforms/sources, and obtain written owner approval.
+- Activation requires the exact phrase `ENABLE CONTROLLED AUTOMATION` through the owner-only policy endpoint; it is audit logged.
+- Start with one prepared approved order. Watch provider balance, audit events, status history, and reconciliation before widening the limit.
+- Use the owner emergency stop immediately for a stale/changed quote, low balance/capacity, missing credentials, UNKNOWN response, cooldown, risk violation, repeated failure, unexplained financial difference, or duplicate suspicion. Manual recovery remains available.
 
 ## Pilot gate
 
